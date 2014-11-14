@@ -1,0 +1,180 @@
+#!/bin/bash
+#
+# Download and deploy WordPress and all listed themes/plugins
+#
+
+usage() { echo "Usage: $0 [-c <string>]" 1>&2; exit 1; }
+
+while getopts ":c:" o; do
+    case "${o}" in
+        c)
+            c=${OPTARG}
+            [ -f $c ] || usage
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+if [ -z "${c}" ]; then
+    usage
+fi
+
+# Import config variables
+echo "Sourcing config file '$c'..."
+. $c
+
+# Needs certain environment variables set
+if [ "x$WP_THEMES_LIST" = "x" ]; then
+    echo "Need to set WP_THEMES_LIST."
+    exit 1
+fi
+if [ "x$WP_PLUGIN_LIST" = "x" ]; then
+    echo "Need to set WP_PLUGIN_LIST."
+    exit 1
+fi
+
+# Ensure we know where to get WP base from
+if [ "x$WP_DOWNLOAD_URL" = "x" ]; then
+    WP_DOWNLOAD_URL="http://wordpress.org/latest.zip"
+fi
+
+# Create a working directory to build this all in
+tmpdir=`mktemp -d` && cd $tmpdir
+
+# Grab WordPress and install it first
+echo "Installing WordPress base"
+curl -OLs $WP_DOWNLOAD_URL
+if [ $? != 0 ]; then
+    echo "Failed to download WordPress zip."
+    exit 1
+fi
+unzip -qo `basename $WP_DOWNLOAD_URL`
+if [ $? != 0 ]; then
+    echo "Failed to unzip WordPress zip."
+    exit 1
+fi
+
+# Clear out the existing plugins/themes
+rm -rf wordpress/wp-content/plugins/*
+rm -rf wordpress/wp-content/themes/*
+
+# Grab a copy of each theme and deploy it
+for i in $WP_THEMES_LIST; do
+    zipfile=`basename $i`
+    echo "Installing theme $zipfile"
+    curl -OLs $i
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to fetch $i"
+        exit 1;
+    fi
+    unzip -qo $zipfile
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to unzip $zipfile"
+        exit 1;
+    fi
+    themedir=`echo $zipfile | sed -e "s;\.zip;;g"`
+    if [ ! -d $themedir ]; then
+        # Edge cases
+        themedir=`echo $zipfile | cut -f1 -d.`
+    fi
+    mv $themedir wordpress/wp-content/themes
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to move $themedir into place."
+        exit 1;
+    fi
+done
+
+# Grab a copy of each plugin and deploy it
+for i in $WP_PLUGIN_LIST; do
+    zipfile=`basename $i`
+    echo "Installing plugin $zipfile"
+    curl -OLs $i
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to fetch $i"
+        exit 1;
+    fi
+    unzip -qo $zipfile
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to unzip $zipfile"
+        exit 1;
+    fi
+    plugindir=`echo $zipfile | sed -e "s;\.zip;;g"`
+    if [ ! -d $plugindir ]; then
+        # Edge cases
+        plugindir=`echo $zipfile | cut -f1 -d-`
+    fi
+    mv $plugindir wordpress/wp-content/plugins
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to move $plugindir into place."
+        exit 1;
+    fi
+done
+
+# Install configuration file
+if [ "x$WP_CONFIG_FILE" != "x" ]; then
+    echo "Putting config file in place."
+    cp $WP_CONFIG_FILE wordpress/wp-config.php
+fi
+
+# Install htaccess file
+if [ "x$WP_HTACCESS_FILE" != "x" ]; then
+    echo "Putting htaccess file in place."
+    cp $WP_HTACCESS_FILE wordpress/.htaccess
+fi
+
+# Install Beanstalk configuration (.ebextensions)
+if [ "x$WP_BEANSTALK_CONFIG" != "x" ]; then
+    echo "Putting Beanstalk config in place."
+    cp -r $WP_BEANSTALK_CONFIG wordpress/.ebextensions
+fi
+
+# Pop it all in one big zip file
+echo "Packing up master zip file..."
+packedzipfile=wordpress-prepacked.zip
+(cd wordpress && zip -r ../$packedzipfile .)
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to zip up packed zip file."
+    exit 1;
+fi
+
+# Push this somewhere appropriate
+if [ "x$WP_S3_BUCKET" != "x" ]; then
+    uid=`date +%Y%m%d%H%M%S`
+    awscmd="aws --profile $WP_AWS_PROFILE"
+    s3key=`printf $WP_S3_KEY $uid`
+    echo "Uploading packed zip to S3 for deployment."
+    $awscmd s3 cp $packedzipfile s3://$WP_S3_BUCKET/$s3key
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to upload packed zip file."
+        exit 1;
+    fi
+    
+    echo "Registering uploaded zip as a Beanstalk application version."
+    $awscmd elasticbeanstalk create-application-version \
+        --application-name "$WP_BEANSTALK_APPNAME" \
+        --version-label "wpbuilder-$uid.zip" \
+        --description "$WP_BEANSTALK_APPDESC" \
+        --source-bundle S3Bucket=$WP_S3_BUCKET,S3Key=$s3key
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to register packed zip file as app version."
+        exit 1;
+    fi
+    
+    echo "Deploy the latest version."
+    $awscmd elasticbeanstalk update-environment \
+        --environment-name "WordPress" \
+        --version-label "wpbuilder-$uid.zip"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to deploy latest version."
+        exit 1;
+    fi
+fi
+
+# Clear down the temporary directory
+echo "Clearing down temporary files."
+rm -rf $tmpdir
+
+echo "Done."
+
