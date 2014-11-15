@@ -133,7 +133,7 @@ fi
 # Pop it all in one big zip file
 echo "Packing up master zip file..."
 packedzipfile=wordpress-prepacked.zip
-(cd wordpress && zip -r ../$packedzipfile .)
+(cd wordpress && zip -qr ../$packedzipfile .)
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to zip up packed zip file."
     exit 1;
@@ -142,7 +142,10 @@ fi
 # Push this somewhere appropriate
 if [ "x$WP_S3_BUCKET" != "x" ]; then
     uid=`date +%Y%m%d%H%M%S`
-    awscmd="aws --profile $WP_AWS_PROFILE"
+    awscmd="aws"
+    if [ "x$WP_AWS_PROFILE" != "x" ]; then
+        awscmd="$awscmd --profile $WP_AWS_PROFILE"
+    fi
     s3key=`printf $WP_S3_KEY $uid`
     echo "Uploading packed zip to S3 for deployment."
     $awscmd s3 cp $packedzipfile s3://$WP_S3_BUCKET/$s3key
@@ -164,7 +167,7 @@ if [ "x$WP_S3_BUCKET" != "x" ]; then
     
     echo "Deploy the latest version."
     $awscmd elasticbeanstalk update-environment \
-        --environment-name "WordPress" \
+        --environment-name "$WP_BEANSTALK_ENVNAME" \
         --version-label "wpbuilder-$uid.zip"
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to deploy latest version."
