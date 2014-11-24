@@ -1,0 +1,68 @@
+#!/bin/bash
+#
+# Download and deploy WordPress and all listed themes/plugins
+#
+
+usage() { echo "Usage: $0 [-c <string>]" 1>&2; exit 1; }
+
+while getopts ":c:" o; do
+    case "${o}" in
+        c)
+            c=${OPTARG}
+            [ -f $c ] || usage
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+if [ -z "${c}" ]; then
+    usage
+fi
+
+# Import config variables
+echo "Sourcing config file '$c'..."
+. $c
+
+# Determine where to place the resulting ZIP file
+packedzipfile=$(pwd)/wordpress-prepacked.zip
+
+# Push this somewhere appropriate
+if [ "x$WP_S3_BUCKET" != "x" ]; then
+    uid=`date +%Y%m%d%H%M%S`
+    awscmd="aws"
+    if [ "x$WP_AWS_PROFILE" != "x" ]; then
+        awscmd="$awscmd --profile $WP_AWS_PROFILE"
+    fi
+    s3key=`printf $WP_S3_KEY $uid`
+    echo "Uploading packed zip to S3 for deployment."
+    $awscmd s3 cp $packedzipfile s3://$WP_S3_BUCKET/$s3key
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to upload packed zip file."
+        exit 1;
+    fi
+    
+    echo "Registering uploaded zip as a Beanstalk application version."
+    $awscmd elasticbeanstalk create-application-version \
+        --application-name "$WP_BEANSTALK_APPNAME" \
+        --version-label "wpbuilder-$uid.zip" \
+        --description "$WP_BEANSTALK_APPDESC" \
+        --source-bundle S3Bucket=$WP_S3_BUCKET,S3Key=$s3key
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to register packed zip file as app version."
+        exit 1;
+    fi
+    
+    echo "Deploy the latest version."
+    $awscmd elasticbeanstalk update-environment \
+        --environment-name "$WP_BEANSTALK_ENVNAME" \
+        --version-label "wpbuilder-$uid.zip"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to deploy latest version."
+        exit 1;
+    fi
+fi
+
+echo "Done."
+
