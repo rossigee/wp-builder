@@ -64,26 +64,26 @@ rm -rf wordpress/wp-content/themes/*
 for i in $WP_THEMES_LIST; do
     zipfile=`basename $i`
     echo "Installing theme $zipfile"
+    cd $tmpdir
     curl -OLs $i
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to fetch $i"
         exit 1;
     fi
-    unzip -qo $zipfile
+    tmpsubdir=`mktemp -d` && cd $tmpsubdir
+    unzip -qo $tmpdir/$zipfile
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to unzip $zipfile"
         exit 1;
     fi
-    themedir=`echo $zipfile | sed -e "s;\.zip;;g"`
-    if [ ! -d $themedir ]; then
-        # Edge cases
-        themedir=`echo $zipfile | cut -f1 -d.`
-    fi
-    mv $themedir wordpress/wp-content/themes
+    themedir=`ls -1`
+    mv $themedir $tmpdir/wordpress/wp-content/themes
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to move $themedir into place."
         exit 1;
     fi
+    cd $tmpdir
+    rm -rf $tmpsubdir
 done
 
 # Grab a copy of each plugin and deploy it
@@ -95,39 +95,50 @@ for i in $WP_PLUGIN_LIST; do
         echo "ERROR: Failed to fetch $i"
         exit 1;
     fi
-    unzip -qo $zipfile
+    tmpsubdir=`mktemp -d` && cd $tmpsubdir
+    unzip -qo $tmpdir/$zipfile
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to unzip $zipfile"
         exit 1;
     fi
-    plugindir=`echo $zipfile | sed -e "s;\.zip;;g"`
-    if [ ! -d $plugindir ]; then
-        # Edge cases
-        plugindir=`echo $zipfile | cut -f1 -d-`
-    fi
-    mv $plugindir wordpress/wp-content/plugins
+    plugindir=`ls -1`
+    mv $plugindir $tmpdir/wordpress/wp-content/plugins
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to move $plugindir into place."
         exit 1;
     fi
+    cd $tmpdir
+    rm -rf $tmpsubdir
 done
 
 # Install configuration file
 if [ "x$WP_CONFIG_FILE" != "x" ]; then
     echo "Putting config file in place."
     cp $WP_CONFIG_FILE wordpress/wp-config.php
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to move config file into place."
+        exit 1;
+    fi
 fi
 
 # Install htaccess file
 if [ "x$WP_HTACCESS_FILE" != "x" ]; then
     echo "Putting htaccess file in place."
     cp $WP_HTACCESS_FILE wordpress/.htaccess
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to move htaccess into place."
+        exit 1;
+    fi
 fi
 
 # Install Beanstalk configuration (.ebextensions)
 if [ "x$WP_BEANSTALK_CONFIG" != "x" ]; then
     echo "Putting Beanstalk config in place."
     cp -r $WP_BEANSTALK_CONFIG wordpress/.ebextensions
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to move ebextensions into place."
+        exit 1;
+    fi
 fi
 
 # Pop it all in one big zip file
