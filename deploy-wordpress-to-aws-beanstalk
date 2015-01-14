@@ -55,13 +55,17 @@ if [ "x$WP_S3_BUCKET" != "x" ]; then
     fi
     
     echo "Deploy the latest version."
-    $awscmd elasticbeanstalk update-environment \
-        --environment-name "$WP_BEANSTALK_ENVNAME" \
-        --version-label "wpbuilder-$uid.zip"
-    if [ $? -ne 0 ]; then
-        echo "ERROR: Failed to deploy latest version."
-        exit 1;
-    fi
+    IFS="," read -a array <<< "$WP_BEANSTALK_ENVNAME"
+    for element in "${array[@]}"
+    do
+        $awscmd elasticbeanstalk update-environment \
+            --environment-name "$element" \
+            --version-label "wpbuilder-$uid.zip"
+        if [ $? -ne 0 ]; then
+            echo "ERROR: Failed to deploy latest version."
+            exit 1;
+        fi
+    done
 fi
 
 echo "Done."
