@@ -9,7 +9,7 @@ while getopts ":c:" o; do
     case "${o}" in
         c)
             c=${OPTARG}
-            [ -f $c ] || usage
+            [ -f "${c}" ] || usage
             ;;
         *)
             usage
@@ -23,7 +23,7 @@ fi
 
 # Import config variables
 echo "Sourcing config file '$c'..."
-. $c
+. "${c}"
 
 # Determine where to place the resulting ZIP file
 packedzipfile=$(pwd)/wordpress-prepacked.zip

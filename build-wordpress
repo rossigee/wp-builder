@@ -9,7 +9,7 @@ while getopts ":c:" o; do
     case "${o}" in
         c)
             c=${OPTARG}
-            [ -f $c ] || usage
+            [ -f "${c}" ] || usage
             ;;
         *)
             usage
@@ -23,7 +23,7 @@ fi
 
 # Import config variables
 echo "Sourcing config file '$c'..."
-. $c
+. "${c}"
 
 # Needs certain environment variables set
 if [ "x$WP_THEMES_LIST" = "x" ]; then
